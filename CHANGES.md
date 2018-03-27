@@ -1,5 +1,8 @@
 ## Changes
 
+### 2.0.1
+- Updated `README.md` to reflect the code changes
+
 ### 2.0.0
 - Major additions, changes & fixes to `redis-client-cache` module:
   - Replaced the exported object with a new `RedisClient` class, which must be constructed with a configurable Redis 

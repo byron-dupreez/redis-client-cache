@@ -1,6 +1,6 @@
 {
   "name": "redis-client-cache",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A simple cache of RedisClient instances for use with AWS Lambdas.",
   "author": "Byron du Preez",
   "license": "Apache-2.0",
