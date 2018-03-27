@@ -1,4 +1,4 @@
-# redis-client-cache
+# redis-client-cache v2.0.0
 A simple module-scope cache of RedisClient instances by host and port (primarily for AWS Lambda use).
 
 **NB:** This module depends on the external `redis` module and caches that module's `RedisClient` instances.
@@ -17,19 +17,34 @@ $ npm i --save redis-client-cache
 
 ## Usage
 
-* To use the RedisClient cache to configure and cache a RedisClient instance per host-port combination
+* To use the RedisClient cache to set and get a previously or newly cached, "raw" (untested) RedisClient instance per 
+  host-port combination
 ```js
 const redisClientCache = require('redis-client-cache');
 
-// Preamble to create a context and configure logging on the context
-const context = {};
-const logging = require('logging-utils');
-logging.configureLogging(context); // or your own custom logging configuration (see logging-utils README.md)
+// Choose a Redis adapter to use - either 'rcc-redis-adapter' or 'rcc-ioredis-adapter' 
+// For unit testing, choose either 'rcc-redis-mock-adapter' or 'rcc-ioredis-mock-adapter'
+const redis = require('rcc-redis-adapter');
 
-// Define the RedisClient constructor options that you want to use, e.g.
+// Preamble to create a context and configure logging on the context
+let context = {};
+const logging = require('logging-utils');
+context = logging.configureLogging(context); // or your own custom logging configuration (see logging-utils README.md)
+assert(context.redis === redis);
+
+// NB: Configure the redis client cache with an appropriate Redis adapter to use
+context = redisClientCache.configureRedis(context, redis);
+
+const host = '127.0.0.1'; // ... replace with your redis server's host
+const port = 6379; // ... replace with your redis server's port
+
+
+// Define the redis client constructor options that you want to use, e.g.
 const redisClientOptions = {
-  // See https://www.npmjs.com/package/redis#options-object-properties for full details
+  host: host,
+  port: port,
   string_numbers: true
+  // See https://www.npmjs.com/package/redis#options-object-properties for full details
   // ...
 };
 
@@ -39,28 +54,91 @@ const redisClientOptions = {
 const redisClient = redisClientCache.setRedisClient(redisClientOptions, context);
 assert(redisClient);
 
-// To configure a new RedisClient instance (or re-use a cached instance) on a context 
-redisClientCache.configureRedisClient(context, redisClientOptions);
-console.log(context.redisClient);
+// To configure a new RedisClient instance (or re-use a compatible, previously cached instance) on a context 
+const opts = undefined; // OR: const opts = {testRedisClient: false};
+context = redisClientCache.configureRedisClient(redis, redisClientOptions, opts);
+assert(context.redisClient);
 
-// To get a previously set or configured RedisClient instance for the default host and port
-const redisClient1 = redisClientCache.getRedisClient();
+// To get a previously set or configured RedisClient instance for a specified host and port
+const redisClient1 = redisClientCache.getRedisClient('localhost', 9999);
 assert(redisClient1);
 
-// ... or for a specified host and port
-const redisClient2 = redisClientCache.getRedisClient('localhost', 9999);
+// ... or, less useful, for the DEFAULT host and port
+const redisClient2 = redisClientCache.getRedisClient(redis.defaultHost, redis.defaultPort);
 assert(redisClient2);
 
-// To get the original options that were used to construct a cached RedisClient instance for the default or specified host and port
-const optionsUsed1 = redisClientCache.getRedisClientOptionsUsed();
+// To get the original options that were used to construct a cached RedisClient instance for a specified host and port
+const optionsUsed1 = redisClientCache.getRedisClientOptionsUsed('localhost', 9999);
 assert(optionsUsed1);
 
-const optionsUsed2 = redisClientCache.getRedisClientOptionsUsed('localhost', 9999);
+// ... or, less useful, for the DEFAULT host and port
+const optionsUsed2 = redisClientCache.getRedisClientOptionsUsed(redis.defaultHost, redis.defaultPort);
 assert(optionsUsed2);
 
-// To delete and remove a cached RedisClient instance from the cache
-const deleted = redisClientCache.deleteRedisClient('localhost', 9999);
+// To remove (and also end/quit) a cached RedisClient instance from the cache
+const deleted = redisClientCache.deleteRedisClient('localhost', 9999, context);
 assert(deleted);
+
+// To asynchronously test connectivity of a RedisClient instance
+redisClientCache.isRedisClientUsable(redisClient, context).then(usable => {
+  // usable will be true if the async connectivity test worked; otherwise false
+  assert(usable === true);
+  // ...
+});
+
+// To simultaneously test connectivity of a RedisClient instance and then EITHER return it (if the test passed)
+// OR return a brand new instance (if the test failed)
+redisClientCache.replaceRedisClientIfUnusable(redisClient, redisClientOptions, context).then(client => {
+  assert(client);
+  // ...
+});
+```
+
+* To use the RedisClient cache to set and get a previously or newly cached, tested and USABLE RedisClient 
+  instance (if the connectivity test passed) or a brand new instance (if the connectivity test failed) per host-port 
+  combination. Note that this function returns a promise, since it performs an asynchronous connectivity test against
+  the Redis server (and also suffers the overhead of doing so).
+```js
+const redisClientCache = require('redis-client-cache');
+
+// Preamble to create a context and configure logging on the context
+let context = {};
+const logging = require('logging-utils');
+context = logging.configureLogging(context); // or your own custom logging configuration (see logging-utils README.md)
+
+// NB: Configure the redis client cache with an appropriate Redis adapter to use
+context = redisClientCache.configureRedis(context, redis);
+
+const host = '127.0.0.1'; // ... your redis server's host
+const port = 6379; // ... your redis server's port
+
+// Define the RedisClient constructor options that you want to use, e.g.
+const redisClientOptions = {
+  host: host,
+  port: port,
+  string_numbers: true
+  // See https://www.npmjs.com/package/redis#options-object-properties for full details (if using `rcc-redis-adapter`) 
+  // ...
+};
+
+// To set a new "tested" and USABLE RedisClient instance with the given RedisClient constructor options for either the 
+// default host and port or for the host and port specified in the given options OR to reuse a previously cached, 
+// tested and USABLE RedisClient instance (if any) that is compatible with the given options
+const redisClientPromise = redisClientCache.setRedisClientAndReplaceIfUnusable(redisClientOptions, context);
+// ...
+redisClientPromise.then(redisClient => {
+  assert(redisClient);
+  // ...  
+});
+
+// To configure BOTH a new RedisClient instance (or re-use a compatible, previously cached instance) on a context AND
+// a promise of the same instance "tested" or a brand new instance on a context 
+redisClientCache.configureRedisClient(context, redisClientOptions, {testRedisClient: true});
+assert(context.redisClient && context.redisClientPromise);
+
+// To later retrieve the cached RedisClient instance
+const client = redisClientCache.getRedisClient(host, port);
+assert(client);
 ```
 
 ## Unit tests
@@ -69,4 +147,4 @@ This module's unit tests were developed with and must be run with [tape](https:/
 See the [package source](https://github.com/byron-dupreez/redis-client-cache) for more details.
 
 ## Changes
-See [release_notes.md](./release_notes.md)
+See [CHANGES.md](CHANGES.md)
