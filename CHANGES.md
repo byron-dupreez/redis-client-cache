@@ -2,6 +2,7 @@
 
 ### 2.0.2
 - Cached a snapshot of the options actually used - in case the options are mutated during RedisClient creation
+- Simplified some of the property and function names
 
 ### 2.0.1
 - Updated `README.md` to reflect the code changes

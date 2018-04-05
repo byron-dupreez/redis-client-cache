@@ -11,13 +11,13 @@ const deepEqual = require('deep-equal');
 const strict = {strict: true};
 
 // Module-scope cache of RedisClient instances by host-port key
-let redisClientsByHostPortKey = new WeakMap();
+let redisClientsByKey = new WeakMap();
 
 // Module-scope cache of the RedisClient options used to construct the RedisClient instances by host-port key
-let redisClientOptionsByHostPortKey = new WeakMap();
+let redisClientOptionsByKey = new WeakMap();
 
 // A map of host-port key objects by host-port, which is only needed, because WeakMaps can ONLY have object keys
-const hostPortKeysByHostPort = new Map();
+const keysByHostPort = new Map();
 
 const defaultNamedRedisFunctionsToPromisify = ['del', 'get', 'set', 'getset', 'quit', 'end', 'info', 'ping', 'expire', 'exec'];
 //, 'hget', 'hgetall', 'hset', 'hdel', 'hmget', 'hmset'];
@@ -62,14 +62,6 @@ class RedisClientCache {
     context.redisClientCache.promisifyClientFunctions(namedRedisFunctionsToPromisify, context);
     return context;
   }
-
-  // /**
-  //  * Returns this cache's Redis adapter.
-  //  * @return {RedisAdapter} returns this cache's Redis adapter
-  //  */
-  // getAdapter() {
-  //   return this.redis;
-  // }
 
   /**
    * Installs a promise-returning version of the named RedisClient prototype function (if not already installed) that must
@@ -175,8 +167,8 @@ class RedisClientCache {
    *          or default host & port (if any); otherwise returns undefined
    */
   getRedisClientOptionsUsed(host, port) {
-    const hostPortKey = getHostPortKey(host, port);
-    return hostPortKey ? redisClientOptionsByHostPortKey.get(hostPortKey) : undefined;
+    const key = getKey(host, port);
+    return key ? redisClientOptionsByKey.get(key) : undefined;
   }
 
   // noinspection JSMethodCanBeStatic
@@ -189,8 +181,8 @@ class RedisClientCache {
    *          otherwise returns undefined
    */
   getRedisClient(host, port) {
-    const hostPortKey = getHostPortKey(host, port);
-    return hostPortKey ? redisClientsByHostPortKey.get(hostPortKey) : undefined;
+    const key = getKey(host, port);
+    return key ? redisClientsByKey.get(key) : undefined;
   }
 
   /**
@@ -203,8 +195,8 @@ class RedisClientCache {
    *          otherwise returns undefined
    */
   getRedisClientAndReplaceIfClosing(host, port, context) {
-    const hostPortKey = getHostPortKey(host, port);
-    const redisClient = redisClientsByHostPortKey.get(hostPortKey);
+    const key = getKey(host, port);
+    const redisClient = redisClientsByKey.get(key);
     if (redisClient && redisClient.isClosing()) {
       return this.replaceRedisClientIfClosing(redisClient, context);
     }
@@ -234,10 +226,10 @@ class RedisClientCache {
     // If no host and/or port were specified in the given redis client constructor options, then set them to the defaults
     const redis = this.redis;
     const [host, port] = resolveHostAndPortFromOptions(options, redis.defaultHost, redis.defaultPort, context);
-    const hostPortKey = getOrSetHostPortKey(host, port);
+    const key = getOrSetKey(host, port);
 
     // Check if there is already a RedisClient instance cached for this host & port
-    const redisClient = redisClientsByHostPortKey.get(hostPortKey);
+    const redisClient = redisClientsByKey.get(key);
     if (!redisClient) {
       return rcc.createNewClient(options, context);
     }
@@ -254,7 +246,7 @@ class RedisClientCache {
       }
 
       context.trace(`Replacing CLOSING RedisClient instance with a new one for host (${host}) & port (${port}) ${withDesc}`);
-      deleteClientByHostPortKey(hostPortKey, context);
+      deleteClientByKey(key, context);
 
       return rcc.createNewClient(options, context);
     }
@@ -270,7 +262,7 @@ class RedisClientCache {
     }
 
     // If the given options match the options used to construct the cached instance, then returns the cached instance
-    const optionsUsed = redisClientOptionsByHostPortKey.get(hostPortKey);
+    const optionsUsed = redisClientOptionsByKey.get(key);
 
     // Use the cached instance if its config is identical to the modified options
     if (deepEqual(optionsUsed, options, strict)) {
@@ -279,7 +271,7 @@ class RedisClientCache {
 
     // Otherwise dump the old incompatible redis client in favour of one with the new options
     context.warn(`Replacing INCOMPATIBLE cached RedisClient instance (${JSON.stringify(optionsUsed)}) for host (${host}) & port (${port}) with new instance (${JSON.stringify(options)})`);
-    deleteClientByHostPortKey(hostPortKey, context);
+    deleteClientByKey(key, context);
     rcc.disconnectClient(redisClient, context).catch(err => context.error(err));
 
     return rcc.createNewClient(options, context);
@@ -298,9 +290,9 @@ class RedisClientCache {
     if (redisClient.isClosing()) {
       // Old redis client is closing/closed, so create and cache a new redis client
       context.trace(`Replacing closing RedisClient instance for host (${host}) & port (${port}) with a new one`);
-      const hostPortKey = getHostPortKey(host, port);
-      const options = (hostPortKey && redisClientOptionsByHostPortKey.get(hostPortKey)) || redisClient.getOptions();
-      deleteClientByHostPortKey(hostPortKey, context);
+      const key = getKey(host, port);
+      const options = (key && redisClientOptionsByKey.get(key)) || redisClient.getOptions();
+      deleteClientByKey(key, context);
       return this.createNewClient(options, context);
     }
 
@@ -341,11 +333,11 @@ class RedisClientCache {
 
       // Old redis client is no longer usable, so create and cache a new redis client
       context.trace(`Replacing UNUSABLE RedisClient instance for host (${host}) & port (${port}) with a new one`);
-      const hostPortKey = getHostPortKey(host, port);
-      const options = redisClientOptions || (hostPortKey && redisClientOptionsByHostPortKey.get(hostPortKey)) ||
+      const key = getKey(host, port);
+      const options = redisClientOptions || (key && redisClientOptionsByKey.get(key)) ||
         redisClient.getOptions();
 
-      deleteClientByHostPortKey(hostPortKey, context);
+      deleteClientByKey(key, context);
       this.disconnectClient(redisClient, context).catch(e => (context || console).error(e));
 
       return this.createNewClient(options, context);
@@ -366,7 +358,6 @@ class RedisClientCache {
       if (!redisClient.pingAsync) {
         this.promisifyClientFunction('ping', context);
       }
-      // return redisClient.pingAsync('PONG').then(
       return redisClient.pingAsync("PONG").then(
         pong => {
           context.trace(`Ping passed for RedisClient instance for host (${host}) & port (${port}) - ping (${JSON.stringify(pong)})`);
@@ -406,9 +397,9 @@ class RedisClientCache {
     context.trace(`Created a new redis client for host (${host}) & port (${port}) - took ${Date.now() - startMs} ms`);
 
     // Cache the new instance and the options used to create it
-    const hostPortKey = getOrSetHostPortKey(host, port);
-    redisClientsByHostPortKey.set(hostPortKey, redisClient);
-    redisClientOptionsByHostPortKey.set(hostPortKey, optionsUsed);
+    const key = getOrSetKey(host, port);
+    redisClientsByKey.set(key, redisClient);
+    redisClientOptionsByKey.set(key, optionsUsed);
 
     const onConnect = () => {
       context.trace(`Redis client connection to host (${host}) & port (${port}) has CONNECTED - took ${Date.now() - startMs} ms`);
@@ -447,16 +438,16 @@ class RedisClientCache {
    * a promise of an array of results - one for each host & port combination cleared from the cache
    */
   clearCache(context) {
-    const hostPortKeys = listHostPortKeys();
-    const disconnectPromises = hostPortKeys.map(hostPortKey => {
-      const redisClient = redisClientsByHostPortKey.get(hostPortKey);
-      const deleted = deleteClientByHostPortKey(hostPortKey, context);
+    const keys = listKeys();
+    const disconnectPromises = keys.map(key => {
+      const redisClient = redisClientsByKey.get(key);
+      const deleted = deleteClientByKey(key, context);
       if (redisClient) {
         return this.disconnectClient(redisClient, context).then(
           disconnected => {
             return {
-              host: hostPortKey.host,
-              port: hostPortKey.port,
+              host: key.host,
+              port: key.port,
               deleted: deleted,
               disconnected: disconnected
             };
@@ -464,8 +455,8 @@ class RedisClientCache {
           err => {
             context.error(err);
             return {
-              host: hostPortKey.host,
-              port: hostPortKey.port,
+              host: key.host,
+              port: key.port,
               deleted: deleted,
               disconnected: false
             };
@@ -473,8 +464,8 @@ class RedisClientCache {
         );
       } else {
         return {
-          host: hostPortKey.host,
-          port: hostPortKey.port,
+          host: key.host,
+          port: key.port,
           deleted: deleted
         };
       }
@@ -482,25 +473,6 @@ class RedisClientCache {
 
     return Promise.all(disconnectPromises);
   }
-
-
-  // /**
-  //  * Deletes/un-caches and disconnects the given redis client.
-  //  * @param {RedisClient} redisClient - the redis client to un-cache and disconnect
-  //  * @param {RedisClientCacheAware} context - the context to use
-  //  * @returns {[boolean, Promise]} an array containing: true if existed and deleted, otherwise false; followed by a
-  //  *          promise that will complete with the result of the asynchronous disconnection attempt
-  //  */
-  // deleteAndDisconnectClient(redisClient, context) {
-  //   if (redisClient) {
-  //     const hostPortKey = this.resolveRedisClientHostPortKey(redisClient);
-  //     const deleted = !!hostPortKey && deleteClientByHostPortKey(hostPortKey, context);
-  //     const disconnectPromise = this.disconnectClient(redisClient, context)
-  //       .catch(err => (context || console).error(err));
-  //     return [deleted, disconnectPromise];
-  //   }
-  //   return [false, undefined];
-  // }
 
   /**
    * Deletes/un-caches and disconnects the given redis client.
@@ -512,9 +484,9 @@ class RedisClientCache {
    * result of the asynchronous disconnection attempt
    */
   deleteAndDisconnectRedisClient(host, port, context) {
-    let hostPortKey = getHostPortKey(host, port);
-    const redisClient = hostPortKey ? redisClientsByHostPortKey.get(hostPortKey) : undefined;
-    const deleted = !!hostPortKey && deleteClientByHostPortKey(hostPortKey, context);
+    let key = getKey(host, port);
+    const redisClient = key ? redisClientsByKey.get(key) : undefined;
+    const deleted = !!key && deleteClientByKey(key, context);
     const disconnectPromise = redisClient ?
       this.disconnectClient(redisClient, context).catch(err => (context || console).error(err)) : undefined;
     return {host, port, deleted, disconnectPromise};
@@ -566,8 +538,8 @@ module.exports = RedisClientCache;
  * @param {number|string} port - the port of a redis server
  * @returns {HostPortKey|undefined} a host-port key object (if one exists); otherwise undefined
  */
-function getHostPortKey(host, port) {
-  return hostPortKeysByHostPort.get(`${host}:${port}`);
+function getKey(host, port) {
+  return keysByHostPort.get(`${host}:${port}`);
 }
 
 /**
@@ -576,46 +548,46 @@ function getHostPortKey(host, port) {
  * @param {number|string} port - the port of a redis server
  * @returns {HostPortKey} a host-port key object
  */
-function getOrSetHostPortKey(host, port) {
+function getOrSetKey(host, port) {
   const hostPort = `${host}:${port}`;
-  let hostPortKey = hostPortKeysByHostPort.get(hostPort);
-  if (!hostPortKey) {
-    hostPortKey = {host: host, port: port};
-    hostPortKeysByHostPort.set(hostPort, hostPortKey);
+  let key = keysByHostPort.get(hostPort);
+  if (!key) {
+    key = {host: host, port: port};
+    keysByHostPort.set(hostPort, key);
   }
-  return hostPortKey;
+  return key;
 }
 
 /**
  * Lists the currently cached host-port keys (if any).
  * @return {Array.<HostPortKey>} a list of host-port keys
  */
-function listHostPortKeys() {
-  const hostPortKeys = new Array(hostPortKeysByHostPort.size);
-  const iter = hostPortKeysByHostPort.values();
+function listKeys() {
+  const keys = new Array(keysByHostPort.size);
+  const iter = keysByHostPort.values();
   let v = iter.next();
   let i = -1;
   while (!v.done) {
-    hostPortKeys[++i] = v.value;
+    keys[++i] = v.value;
     v = iter.next();
   }
-  return hostPortKeys;
+  return keys;
 }
 
 /**
  * Deletes/un-caches the RedisClient instance cached for the given host & port key (if any).
- * @param {HostPortKey} hostPortKey - the host-port key to use
+ * @param {HostPortKey} key - the host-port key to use
  * @param {RedisClientCacheAware} context - the context to use
  * @returns {boolean} true if existed and deleted, otherwise false
  */
-function deleteClientByHostPortKey(hostPortKey, context) {
-  if (hostPortKey) {
+function deleteClientByKey(key, context) {
+  if (key) {
     // Delete the redis client from the cache
-    redisClientOptionsByHostPortKey.delete(hostPortKey);
-    const deleted = redisClientsByHostPortKey.delete(hostPortKey);
-    hostPortKeysByHostPort.delete(hostPortKey);
+    redisClientOptionsByKey.delete(key);
+    const deleted = redisClientsByKey.delete(key);
+    keysByHostPort.delete(key);
     if (deleted) {
-      context.trace(`Deleted redis client for host(${hostPortKey.host}) & port (${hostPortKey.port}) from cache`);
+      context.trace(`Deleted redis client for host(${key.host}) & port (${key.port}) from cache`);
     }
     return deleted;
   }
@@ -630,8 +602,8 @@ function deleteClientByHostPortKey(hostPortKey, context) {
 //  * @returns {boolean} true if existed and deleted, otherwise false
 //  */
 // function deleteClient(host, port, context) {
-//   const hostPortKey = getHostPortKey(host, port);
-//   return !!hostPortKey && deleteClientByHostPortKey(hostPortKey, context);
+//   const key = getKey(host, port);
+//   return !!key && deleteClientByKey(key, context);
 // }
 
 /**
