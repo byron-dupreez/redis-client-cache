@@ -171,8 +171,8 @@ class RedisClientCache {
    * previously cached); otherwise for the default host & port (if previously cached); otherwise returns undefined.
    * @param {string} host - the host to use
    * @param {number|string} port - the port to use
-   * @returns {RedisClient|undefined} the options used to construct the RedisClient instance cached for the given or
-   *          default host & port (if any); otherwise returns undefined
+   * @returns {RedisClientOptions|undefined} the options used to construct the RedisClient instance cached for the given
+   *          or default host & port (if any); otherwise returns undefined
    */
   getRedisClientOptionsUsed(host, port) {
     const hostPortKey = getHostPortKey(host, port);
@@ -398,13 +398,17 @@ class RedisClientCache {
 
     // Create a new RedisClient instance with the modified options
     const startMs = Date.now();
+
+    // Create a snapshot of the options actually used - in case the redisClientOptions are mutated during the create
+    const optionsUsed = copy(redisClientOptions, deep);
+
     const redisClient = redis.createClient(redisClientOptions);
     context.trace(`Created a new redis client for host (${host}) & port (${port}) - took ${Date.now() - startMs} ms`);
 
     // Cache the new instance and the options used to create it
     const hostPortKey = getOrSetHostPortKey(host, port);
     redisClientsByHostPortKey.set(hostPortKey, redisClient);
-    redisClientOptionsByHostPortKey.set(hostPortKey, redisClientOptions);
+    redisClientOptionsByHostPortKey.set(hostPortKey, optionsUsed);
 
     const onConnect = () => {
       context.trace(`Redis client connection to host (${host}) & port (${port}) has CONNECTED - took ${Date.now() - startMs} ms`);

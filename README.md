@@ -1,4 +1,4 @@
-# redis-client-cache v2.0.1
+# redis-client-cache v2.0.2
 A simple module-scope cache of RedisClient instances by host and port (primarily for AWS Lambda use).
 
 **NB:** This module depends on the external `redis` module and caches that module's `RedisClient` instances.
