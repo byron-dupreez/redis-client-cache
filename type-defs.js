@@ -48,9 +48,8 @@
  * @property {function(key: string): Promise.<*>} [delAsync] - deletes the value for the given key
  * @property {function(pong: string, callback: (Function|undefined)): *} ping - pings the server
  * @property {function(pong: string): Promise.<*>} [pingAsync] - pings the server
- * @property {function(flush: boolean, callback: (Function|undefined)): *} end - disconnects the client (after flushing,
- *           if flush is true; otherwise ends WITHOUT flushing)
- * @property {function(flush: boolean): Promise.<*>} [endAsync] - disconnects the client (after flushing, if true)
+ * @property {function(flush: boolean): *} end - disconnects the client (after flushing, if flush is true; otherwise
+ *           ends WITHOUT flushing)
  */
 
 /**

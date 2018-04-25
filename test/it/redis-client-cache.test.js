@@ -78,17 +78,16 @@ function cleanup(context) {
   // Clear out any cached clients
   clearCache(context.redisClientCache, context);
 
-  // rcc.deleteAndDisconnectRedisClient(host0, port0, context);
-  // rcc.deleteAndDisconnectRedisClient(host1, port1, context);
-  // rcc.deleteAndDisconnectRedisClient(host2, port2, context);
-
   removeTestFn();
 }
 
 function clearCache(rcc, context) {
-  rcc.clearCache(context)
-    .then(r => console.log(`### clearCache results = ${JSON.stringify(r)}`))
-    .catch(e => console.error(e));
+  try {
+    const r = rcc.clearCache(context);
+    console.log(`### clearCache results = ${JSON.stringify(r)}`);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 // =====================================================================================================================
@@ -327,7 +326,7 @@ test('setRedisClient and getRedisClient', t => {
   t.notEqual(redisClient5, redisClient4, `setRedisClient(${JSON.stringify(options5)}) must NOT be cached instance 4 for host (${host2}) & port (${port2})`);
 
   // Check that getRedisClientAndReplaceIfClosing replaces client after disconnecting
-  rcc.disconnectClient(redisClient5, context).catch(e => t.fail(`disconnectClient must NOT fail with error (${e})`));
+  rcc.disconnectClient(redisClient5, context);
   t.ok(redisClient5.isClosing(), `redisClient5 must be closing after disconnectClient`);
   const redisClient6 = rcc.getRedisClientAndReplaceIfClosing(host2, port2, context);
   t.ok(redisClient6, `redisClient6 must exist after getRedisClientAndReplaceIfClosing(${host2}, ${port2}, context)`);
@@ -519,7 +518,7 @@ test('setRedisClientAndReplaceIfUnusable and getRedisClient', t => {
                           t.notEqual(redisClient5, redisClient4, `setRedisClientAndReplaceIfUnusable(${JSON.stringify(options5)}) must NOT be cached instance 4 for host (${host2}) & port (${port2})`);
 
                           // Check that getRedisClientAndReplaceIfClosing replaces client after disconnecting
-                          rcc.disconnectClient(redisClient5, context).catch(e => t.fail(`disconnectClient must NOT fail with error (${e})`));
+                          rcc.disconnectClient(redisClient5, context);
                           t.ok(redisClient5.isClosing(), `redisClient5 must be closing after disconnectClient`);
                           const redisClient6 = rcc.getRedisClientAndReplaceIfClosing(host2, port2, context);
                           t.ok(redisClient6, `redisClient6 must exist after getRedisClientAndReplaceIfClosing(${host2}, ${port2}, context)`);
@@ -531,20 +530,14 @@ test('setRedisClientAndReplaceIfUnusable and getRedisClient', t => {
                           // Delete cache for host 1 & port 1
                           let res = rcc.deleteAndDisconnectRedisClient(host1, port1, context);
                           t.ok(res.deleted, `must delete cached instance for host (${host1}) & port (${port1})`); // clean up
-                          if (res.disconnectPromise) {
-                            res.disconnectPromise.then(disconnected => {
-                              // if (!alwaysFailing) {
-                              t.ok(disconnected, `must disconnect cached instance for host (${host1}) & port (${port1})`); // clean up
-                              // } else {
-                              //   t.notOk(disconnected, `must not disconnect cached instance for host (${host1}) & port (${port1})`); // clean up
-                              // }
-                            });
-                          }
+                          t.ok(res.disconnected, `must disconnect cached instance for host (${host1}) & port (${port1})`); // clean up
+
                           t.equal(rcc.getRedisClient(host1, port1), undefined, `getRedisClient(${host1}, ${port1}) gets undefined after delete`);
 
                           // Delete cache for host 2 & port 2
                           res = rcc.deleteAndDisconnectRedisClient(host2, port2, context);
                           t.ok(res.deleted, `must delete cached instance for host (${host2} & port (${port2})`); // clean up
+
                           t.equal(rcc.getRedisClient(host2, port2), undefined, `getRedisClient(${host2}, ${port2}) gets undefined after delete`);
 
                           // Allow test to end by quitting each of the redis clients!

@@ -19,8 +19,10 @@ let redisClientOptionsByKey = new WeakMap();
 // A map of host-port key objects by host-port, which is only needed, because WeakMaps can ONLY have object keys
 const keysByHostPort = new Map();
 
-const defaultNamedRedisFunctionsToPromisify = ['del', 'get', 'set', 'getset', 'quit', 'end', 'info', 'ping', 'expire', 'exec'];
+// NB - Do NOT put 'end' or 'quit' into defaultNamedRedisFunctionsToPromisify, since they do NOT support callbacks!
+const defaultNamedRedisFunctionsToPromisify = ['del', 'get', 'set', 'getset', 'info', 'ping', 'expire', 'exec'];
 //, 'hget', 'hgetall', 'hset', 'hdel', 'hmget', 'hmset'];
+const nonCallbackFnNames = ['end', 'quit'];
 
 // exports._$_ = '_$_'; //IDE workaround
 
@@ -123,13 +125,13 @@ class RedisClientCache {
             return fnAsync.apply(newRedisClient, arguments).catch(err => {
               context.error(err);
               // deleteAndDisconnectClient(newRedisClient, context);
-              rcc.disconnectClient(newRedisClient, context).catch(e => context.error(e));
+              rcc.disconnectClient(newRedisClient, context);
               throw err;
             });
           } else {
             context.error(err);
             // deleteAndDisconnectClient(redisClient, context);
-            rcc.disconnectClient(redisClient, context).catch(e => context.error(e));
+            rcc.disconnectClient(redisClient, context);
             throw err;
           }
         });
@@ -154,7 +156,12 @@ class RedisClientCache {
    */
   promisifyClientFunctions(fnNames, context) {
     const targetedFnNames = Array.isArray(fnNames) ? fnNames : defaultNamedRedisFunctionsToPromisify;
-    targetedFnNames.forEach(fnName => this.promisifyClientFunction(fnName, context));
+    const usableFnNames = targetedFnNames.filter(n => !nonCallbackFnNames.includes(n));
+    const unusableFnNames = targetedFnNames.filter(n => nonCallbackFnNames.includes(n));
+    if (unusableFnNames.length > 0) {
+      context.warn(`Cannot promisify non-callback functions: ${JSON.stringify(unusableFnNames)}`);
+    }
+    usableFnNames.forEach(fnName => this.promisifyClientFunction(fnName, context));
   }
 
   // noinspection JSMethodCanBeStatic
@@ -272,7 +279,7 @@ class RedisClientCache {
     // Otherwise dump the old incompatible redis client in favour of one with the new options
     context.warn(`Replacing INCOMPATIBLE cached RedisClient instance (${JSON.stringify(optionsUsed)}) for host (${host}) & port (${port}) with new instance (${JSON.stringify(options)})`);
     deleteClientByKey(key, context);
-    rcc.disconnectClient(redisClient, context).catch(err => context.error(err));
+    rcc.disconnectClient(redisClient, context);
 
     return rcc.createNewClient(options, context);
   }
@@ -338,7 +345,7 @@ class RedisClientCache {
         redisClient.getOptions();
 
       deleteClientByKey(key, context);
-      this.disconnectClient(redisClient, context).catch(e => (context || console).error(e));
+      this.disconnectClient(redisClient, context);
 
       return this.createNewClient(options, context);
     });
@@ -415,7 +422,7 @@ class RedisClientCache {
 
     const onError = err => {
       context.error(`Redis client connection to host (${host}) & port (${port}) hit error`, err);
-      self.disconnectClient(redisClient, context).catch(e => context.error(e));
+      self.disconnectClient(redisClient, context);
     };
 
     const onClientError = err => {
@@ -434,34 +441,32 @@ class RedisClientCache {
   /**
    * Clears the RedisClient instance and options caches according to the currently cached host-port keys.
    * @param {RedisClientCacheAware} context - the context to use
-   * @returns {Promise.<Array.<{host: string, port: (number|string), deleted: boolean, disconnected: (boolean|undefined)}>>}
-   * a promise of an array of results - one for each host & port combination cleared from the cache
+   * @returns {Array.<{host: string, port: (number|string), deleted: boolean, disconnected: (boolean|undefined)}>}
+   * an array of results - one for each host & port combination cleared from the cache
    */
   clearCache(context) {
     const keys = listKeys();
-    const disconnectPromises = keys.map(key => {
+    return keys.map(key => {
       const redisClient = redisClientsByKey.get(key);
       const deleted = deleteClientByKey(key, context);
       if (redisClient) {
-        return this.disconnectClient(redisClient, context).then(
-          disconnected => {
-            return {
-              host: key.host,
-              port: key.port,
-              deleted: deleted,
-              disconnected: disconnected
-            };
-          },
-          err => {
-            context.error(err);
-            return {
-              host: key.host,
-              port: key.port,
-              deleted: deleted,
-              disconnected: false
-            };
-          }
-        );
+        try {
+          const disconnected = this.disconnectClient(redisClient, context);
+          return {
+            host: key.host,
+            port: key.port,
+            deleted: deleted,
+            disconnected: disconnected
+          };
+        } catch (err) {
+          context.error(err);
+          return {
+            host: key.host,
+            port: key.port,
+            deleted: deleted,
+            disconnected: false
+          };
+        }
       } else {
         return {
           host: key.host,
@@ -470,8 +475,6 @@ class RedisClientCache {
         };
       }
     });
-
-    return Promise.all(disconnectPromises);
   }
 
   /**
@@ -479,24 +482,28 @@ class RedisClientCache {
    * @param {string} host - the host name (or IP address) of a redis server
    * @param {number|string} port - the port of a redis server
    * @param {RedisClientCacheAware} context - the context to use
-   * @returns {{host: string, port: (number|string), deleted: boolean, disconnectPromise: (Promise.<boolean>|undefined)}}
-   * an array containing: true if existed and deleted, otherwise false; followed by a promise that will complete with the
-   * result of the asynchronous disconnection attempt
+   * @returns {{host: string, port: (number|string), deleted: boolean, disconnected: (boolean|undefined)}}
+   *          an object containing: host, port, deleted (true if existed and deleted, otherwise false) &
+   *          disconnected (true if disconnected; false if not; undefined if no redis client was provided)
    */
   deleteAndDisconnectRedisClient(host, port, context) {
     let key = getKey(host, port);
     const redisClient = key ? redisClientsByKey.get(key) : undefined;
     const deleted = !!key && deleteClientByKey(key, context);
-    const disconnectPromise = redisClient ?
-      this.disconnectClient(redisClient, context).catch(err => (context || console).error(err)) : undefined;
-    return {host, port, deleted, disconnectPromise};
+    try {
+      const disconnected = redisClient ? this.disconnectClient(redisClient, context) : undefined;
+      return {host, port, deleted, disconnected};
+    } catch (err) {
+      (context || console).error(err);
+    }
   }
 
+  // noinspection JSMethodCanBeStatic
   /**
    * Attempts to disconnect the given RedisClient instance from its server.
    * @param {RedisClient} redisClient
    * @param {RedisClientCacheAware} context - the context to use
-   * @return {Promise.<boolean>} a promise of true if quit succeeds on the redis client; false otherwise
+   * @return {boolean} true if disconnect succeeds; false otherwise
    */
   disconnectClient(redisClient, context) {
     if (redisClient) {
@@ -505,28 +512,19 @@ class RedisClientCache {
       if (!redisClient.isClosing()) {
         const startMs = Date.now();
         try {
-          // return redisClient.quitAsync().then( // NB - using end(flush=true), because quit does NOT work properly (intermittently server refuses to stop even after quitting all)!
-          if (!redisClient.endAsync) {
-            this.promisifyClientFunction('end', context);
-          }
-          return redisClient.endAsync(true).then(
-            result => {
-              context.trace(`Disconnected redis client from host (${host}) & port (${port}) - (${result}) - took ${Date.now() - startMs} ms`);
-              return true;
-            },
-            err => {
-              context.error(`Failed to disconnect redis client from host (${host}) & port (${port}) (1) - took ${Date.now() - startMs} ms`, err);
-              return false;
-            }
-          );
-        } catch (err) {
-          context.error(`Failed to disconnect redis client from host (${host}) & port (${port}) (2) - took ${Date.now() - startMs} ms`, err);
-          return Promise.resolve(false);
+          // return redisClient.quit() // NB - using end(flush=true), because quit does NOT work properly (intermittently server refuses to stop even after quitting all)!
+          const result = redisClient.end(true);
+          context.trace(`Disconnected redis client from host (${host}) & port (${port}) - result (${result}) - took ${Date.now() - startMs} ms`);
+          return true;
+        }
+        catch (err) {
+          context.error(`Failed to disconnect redis client from host (${host}) & port (${port}) - took ${Date.now() - startMs} ms`, err);
+          return false;
         }
       }
-      return Promise.resolve(true); // already closing
+      return true; // already closing
     }
-    return Promise.resolve(undefined); // no client
+    return undefined; // no client
   }
 }
 

@@ -1,4 +1,4 @@
-# redis-client-cache v2.0.2
+# redis-client-cache v2.1.0
 A simple module-scope cache of RedisClient instances by host and port (primarily for AWS Lambda use).
 
 **NB:** This module depends on the external `redis` module and caches that module's `RedisClient` instances.
@@ -72,8 +72,8 @@ const optionsUsed2 = redisClientCache.getRedisClientOptionsUsed(redis.defaultHos
 assert(optionsUsed2);
 
 // To remove (and also end/quit) a cached RedisClient instance from the cache
-const {host1, port1, deleted, disconnectPromise} = redisClientCache.deleteAndDisconnectRedisClient('localhost', 9999, context);
-assert(host1 && port1 && deleted && disconnectPromise);
+const {host1, port1, deleted, disconnected} = redisClientCache.deleteAndDisconnectRedisClient('localhost', 9999, context);
+assert(host1 && port1 && deleted && disconnected);
 
 // To asynchronously test connectivity of a RedisClient instance
 redisClientCache.isRedisClientUsable(redisClient, context).then(usable => {
