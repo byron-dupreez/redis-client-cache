@@ -1,5 +1,8 @@
 ## Changes
 
+### 2.1.1
+- Updated dependencies
+
 ### 2.1.0
 - Replaced usage of invalid `endAsync` method of `RedisClient` with non-asynchronous `end` method
 - Changed `disconnectClient`, `deleteAndDisconnectRedisClient` & `clearCache` methods of `RedisClientCache` to be non-asynchronous
